@@ -32,21 +32,20 @@ The dataset is not included in this repo. Do not commit it.
 
 ## Setup
 
-Requires Python 3.9+.
 ```bash
-python -m venv venv
+python3 -m venv venv
 
 source venv/bin/activate      # Mac/Linux
 venv\Scripts\activate         # Windows
 
-pip install -r requirements.txt
+pip3 install -r requirements.txt
 ```
 
 ---
 
 ## Running the Project
 ```bash
-python main.py
+python3 main.py
 ```
 
 This will load the dataset, train the model, and output recommendations to the terminal.
