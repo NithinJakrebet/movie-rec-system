@@ -115,6 +115,9 @@ def clean_query(raw):
     return raw.strip()
 
 def fix_common_errors(query):
+    # Ensure SELECT DISTINCT to avoid cross-product duplicates
+    query = re.sub(r'SELECT\s+(?!DISTINCT)', 'SELECT DISTINCT ', query)
+
     # Fix unclosed FILTER parentheses - count and balance them
     def fix_parens(q):
         lines = q.split("\n")
