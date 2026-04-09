@@ -48,11 +48,12 @@ class ItemKNN:
 
 
 class BPRMF:
-    def __init__(self, n_factors=20, lr=0.01, reg=0.01, epochs=10):
+    def __init__(self, n_factors=100, lr=0.05, reg=0.01, epochs=40, lr_decay=0.97):
         self.n_factors = n_factors
         self.lr = lr
         self.reg = reg
         self.epochs = epochs
+        self.lr_decay = lr_decay
 
     def fit(self, train):
         print("Initializing BPR-MF...")
@@ -64,41 +65,55 @@ class BPRMF:
         n_users = len(self.user_ids)
         n_items = len(self.item_ids)
 
-        self.U = np.random.normal(0, 0.01, (n_users, self.n_factors))
-        self.V = np.random.normal(0, 0.01, (n_items, self.n_factors))
+        # Larger init for stronger initial gradients
+        self.U = np.random.normal(0, 0.1, (n_users, self.n_factors))
+        self.V = np.random.normal(0, 0.1, (n_items, self.n_factors))
 
         user_items = train.groupby('userId')['movieId'].apply(set).to_dict()
-        item_list = np.array(list(self.item_idx.keys()))
 
-        print(f"Training BPR-MF for {self.epochs} epochs...")
+        # Pre-map to indices for speed (avoid per-row dict lookups)
+        train_user_idx = train['userId'].map(self.user_idx).values
+        train_item_idx = train['movieId'].map(self.item_idx).values
+        train_user_ids = train['userId'].values
+
+        current_lr = self.lr
+        print(f"Training BPR-MF for {self.epochs} epochs (n_factors={self.n_factors})...")
         for epoch in range(self.epochs):
             total_loss = 0
-            samples = train.sample(frac=0.1, random_state=epoch)
+            n_samples = 0
 
-            for row in samples.itertuples():
-                u = self.user_idx.get(row.userId)
-                i = self.item_idx.get(row.movieId)
-                if u is None or i is None:
-                    continue
+            # Shuffle and use 50% of data per epoch
+            perm = np.random.permutation(len(train))
+            sample_size = len(train) // 2
+            perm = perm[:sample_size]
 
-                rated = user_items.get(row.userId, set())
-                neg_candidates = [it for it in np.random.choice(item_list, 10) if it not in rated]
-                if not neg_candidates:
+            for idx in perm:
+                u = train_user_idx[idx]
+                i = train_item_idx[idx]
+
+                # Fast negative sampling by index
+                rated = user_items.get(train_user_ids[idx], set())
+                for _ in range(5):
+                    j = np.random.randint(0, n_items)
+                    if self.item_ids[j] not in rated:
+                        break
+                else:
                     continue
-                j = self.item_idx[neg_candidates[0]]
 
                 x_ui = self.U[u] @ self.V[i]
                 x_uj = self.U[u] @ self.V[j]
-                x_uij = x_ui - x_uj
+                x_uij = np.clip(x_ui - x_uj, -30, 30)
                 sigmoid = 1 / (1 + np.exp(x_uij))
 
-                self.U[u] += self.lr * (sigmoid * (self.V[i] - self.V[j]) - self.reg * self.U[u])
-                self.V[i] += self.lr * (sigmoid * self.U[u] - self.reg * self.V[i])
-                self.V[j] += self.lr * (-sigmoid * self.U[u] - self.reg * self.V[j])
+                self.U[u] += current_lr * (sigmoid * (self.V[i] - self.V[j]) - self.reg * self.U[u])
+                self.V[i] += current_lr * (sigmoid * self.U[u] - self.reg * self.V[i])
+                self.V[j] += current_lr * (-sigmoid * self.U[u] - self.reg * self.V[j])
 
                 total_loss += -np.log(1 / (1 + np.exp(-x_uij)) + 1e-10)
+                n_samples += 1
 
-            print(f"  Epoch {epoch+1}/{self.epochs} - Loss: {total_loss:.2f}")
+            current_lr *= self.lr_decay
+            print(f"  Epoch {epoch+1}/{self.epochs} - Loss: {total_loss:.2f} (lr={current_lr:.4f})")
 
         print("BPR-MF ready.")
 

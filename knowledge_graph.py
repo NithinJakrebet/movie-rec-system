@@ -3,11 +3,8 @@ from rdflib.namespace import XSD
 import pandas as pd
 import urllib.parse
 
-
-# ── Namespaces ───────────────────────────────────────────────────
-MR   = Namespace("http://movierec.org/")
+MR     = Namespace("http://movierec.org/")
 SCHEMA = Namespace("http://schema.org/")
-
 
 class MovieKnowledgeGraph:
     def __init__(self):
@@ -19,38 +16,38 @@ class MovieKnowledgeGraph:
         print("Building RDF knowledge graph...")
 
         for _, row in movies.iterrows():
-            movie_id  = row['movieId']
-            title     = row['title']
-            genres    = row['genres']
+            movie_id = row['movieId']
+            title    = row['title']
+            genres   = row['genres']
 
             movie_uri = MR[f"movie/{movie_id}"]
 
-            # Type and title
-            self.g.add((movie_uri, RDF.type,       SCHEMA.Movie))
-            self.g.add((movie_uri, SCHEMA.name,    Literal(title, datatype=XSD.string)))
-            self.g.add((movie_uri, MR.movieId,     Literal(movie_id, datatype=XSD.integer)))
+            self.g.add((movie_uri, RDF.type,    SCHEMA.Movie))
+            self.g.add((movie_uri, SCHEMA.name, Literal(title)))
+            self.g.add((movie_uri, MR.movieId,  Literal(movie_id, datatype=XSD.integer)))
 
-            # Genres
             if genres and genres != "(no genres listed)":
                 for genre in genres.split("|"):
                     genre_uri = MR[f"genre/{urllib.parse.quote(genre)}"]
-                    self.g.add((genre_uri, RDF.type,    MR.Genre))
-                    self.g.add((genre_uri, RDFS.label,  Literal(genre, datatype=XSD.string)))
+                    self.g.add((genre_uri, RDF.type,   MR.Genre))
+                    self.g.add((genre_uri, RDFS.label, Literal(genre)))  # plain literal, no datatype
                     self.g.add((movie_uri, MR.hasGenre, genre_uri))
 
         print(f"KG built: {len(self.g)} triples across {len(movies)} movies")
 
     def query_by_genre(self, genre, limit=10):
-        genre_uri = MR[f"genre/{urllib.parse.quote(genre)}"]
         sparql = f"""
             PREFIX mr:     <http://movierec.org/>
             PREFIX schema: <http://schema.org/>
+            PREFIX rdfs:   <http://www.w3.org/2000/01/rdf-schema#>
 
             SELECT ?movieId ?title WHERE {{
-                ?movie rdf:type        schema:Movie ;
-                       mr:hasGenre     <{genre_uri}> ;
-                       schema:name     ?title ;
-                       mr:movieId      ?movieId .
+                ?movie rdf:type     schema:Movie ;
+                       schema:name  ?title ;
+                       mr:movieId   ?movieId ;
+                       mr:hasGenre  ?genre .
+                ?genre rdfs:label ?label .
+                FILTER(?label = "{genre}")
             }}
             LIMIT {limit}
         """
@@ -58,18 +55,20 @@ class MovieKnowledgeGraph:
         return [(int(row.movieId), str(row.title)) for row in results]
 
     def query_movies_by_multiple_genres(self, genres, limit=10):
-        genre_filters = "\n".join(
-            f"?movie mr:hasGenre <{MR[f'genre/{urllib.parse.quote(g)}']}>  ."
-            for g in genres
+        genre_blocks = "\n".join(
+            f"""  ?movie mr:hasGenre ?genre{i} .
+  ?genre{i} rdfs:label "{g}" ."""
+            for i, g in enumerate(genres)
         )
         sparql = f"""
             PREFIX mr:     <http://movierec.org/>
             PREFIX schema: <http://schema.org/>
 
             SELECT ?movieId ?title WHERE {{
-                {genre_filters}
-                ?movie schema:name  ?title ;
-                       mr:movieId   ?movieId .
+                ?movie rdf:type    schema:Movie ;
+                       schema:name ?title ;
+                       mr:movieId  ?movieId .
+                {genre_blocks}
             }}
             LIMIT {limit}
         """
@@ -78,8 +77,8 @@ class MovieKnowledgeGraph:
 
     def get_genres(self):
         sparql = """
-            PREFIX mr:    <http://movierec.org/>
-            PREFIX rdfs:  <http://www.w3.org/2000/01/rdf-schema#>
+            PREFIX mr:   <http://movierec.org/>
+            PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
             SELECT ?label WHERE {
                 ?genre rdf:type   mr:Genre ;
