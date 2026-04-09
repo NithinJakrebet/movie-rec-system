@@ -87,32 +87,55 @@ class KGHybridRecommender:
         # Sum of user's preference weights for this movie's genres
         return sum(profile.get(g, 0.0) for g in movie_genres)
 
-    def recommend(self, user_id, top_n=10):
-        """Generate recommendations by blending CF and KG scores."""
+    def recommend(self, user_id, top_n=10, kg_movie_ids=None):
+        """Generate recommendations by blending CF and KG scores.
+
+        Args:
+            user_id: Target user
+            top_n: Number of recommendations to return
+            kg_movie_ids: Optional list of movie IDs from a KG query to inject
+                          into the candidate pool (for query-aware recommendations)
+        """
         if user_id not in self.train_users:
             return []
 
-        # Get a broader candidate set from the base CF model
         cf_candidates = self.base_model.recommend(user_id, top_n=self.candidate_pool)
         if not cf_candidates:
             return []
 
-        # Score each candidate with both CF rank and KG genre match
+        cf_set = set(cf_candidates)
+        rated = self.train_items.get(user_id, set())
+        kg_injected = []
+        if kg_movie_ids:
+            kg_injected = [mid for mid in kg_movie_ids
+                           if mid not in cf_set and mid not in rated]
+
+        # When KG results are injected, shift blend toward KG signal
+        # so genre-matched movies can compete with CF candidates
+        if kg_movie_ids:
+            blend_alpha = 0.4   # query-aware: more KG weight
+        else:
+            blend_alpha = self.alpha  # default: more CF weight
+
+        # Score CF candidates
         scored = []
         n_candidates = len(cf_candidates)
 
         for rank, movie_id in enumerate(cf_candidates):
-            # CF score: linear decay from 1.0 (rank 0) to ~0 (last rank)
             cf_score = 1.0 - (rank / n_candidates)
-
-            # KG score: genre preference overlap
             kg_score = self._kg_score(user_id, movie_id)
-
-            # Blend
-            blended = self.alpha * cf_score + (1 - self.alpha) * kg_score
+            blended = blend_alpha * cf_score + (1 - blend_alpha) * kg_score
             scored.append((movie_id, blended))
 
-        # Sort by blended score descending
+        # Score KG-injected candidates
+        # These are genre-relevant movies the user hasn't seen —
+        # give them a CF baseline equal to a mid-ranked CF candidate
+        cf_baseline = 0.5
+        for movie_id in kg_injected:
+            kg_score = self._kg_score(user_id, movie_id)
+            blended = blend_alpha * cf_baseline + (1 - blend_alpha) * kg_score
+            scored.append((movie_id, blended))
+
         scored.sort(key=lambda x: x[1], reverse=True)
         return [mid for mid, _ in scored[:top_n]]
 
