@@ -162,7 +162,7 @@ The demo showcases the full recommendation pipeline in three steps:
 2. **CF-Only Recommendations** — ItemKNN produces its top 10 recommendations for a demo user based purely on collaborative filtering.
 3. **Hybrid Recommendations** — The hybrid model combines CF candidates with KG genre-matched movies, re-ranking them using a blended score. Movies from the KG are marked with `<-- KG match`.
 
-### Supported Queries
+### Supported & Unsuppored Queries
 
 The system recognizes the 19 MovieLens genres:
 
@@ -178,6 +178,18 @@ give me a war drama
 ```
 
 Multi-genre queries (e.g., "sci-fi and action") generate SPARQL with multiple required genre joins, returning only movies that match all specified genres.
+
+Queries that don't mention a genre will return no KG results and fall back to pure CF recommendations.
+
+**For Example:**
+```
+recommend movies longer than 1 hour
+show me movies directed by Spielberg
+find movies from the 1990s
+something with Tom Hanks
+highly rated movies
+```
+This is a limitation of the fallback path, not the system architecture. When Ollama is running, the LLM generates real SPARQL queries that can handle runtime, director, year, and actor constraints; but only if those attributes exist in the knowledge graph. The current KG stores movieId, title, and genres only, so even with Ollama running, non-genre constraints will return empty result.
 
 Type `quit` or `q` to exit the demo.
 
@@ -262,7 +274,7 @@ Make sure all `.py` files are in the same directory and your virtual environment
 
 ---
 
-## How It Works (Non-Technical Explanation)
+## How It Works
 
 Imagine you're on Netflix and you ask: "show me some thriller movies." Netflix knows what you've watched before, but its recommendation engine doesn't actually understand what "thriller" means — it just knows that people who watched Movie A also watched Movie B. So when you explicitly ask for a genre, you often get recommendations that feel disconnected from your request.
 
@@ -280,11 +292,9 @@ In short: you talk to the system in natural language, an AI translates your requ
 
 ---
 
-## Presentation Demo Script
+## Demo & Understanding 
 
-This section provides a step-by-step guide for running the live demo during a presentation. The demo takes about 3–5 minutes after the system finishes loading.
-
-### Before the Presentation
+ The demo takes about 3–5 minutes after the system finishes loading.
 
 1. Open two terminal windows
 2. In Terminal 1, start Ollama:
@@ -297,44 +307,6 @@ This section provides a step-by-step guide for running the live demo during a pr
    source myenv/bin/activate
    python3 main.py demo
    ```
-4. Wait for training to complete (~3-4 minutes). You'll see the interactive prompt (`>>`) when it's ready. You can start the demo from a slide deck while this loads in the background.
+4. Wait for training to complete (~3-4 minutes). You'll see the interactive prompt (`>>`) when it's ready. You are ready to demo our movie reccomender!
 
-### Demo Walkthrough
 
-Once the system is ready, you'll see the demo user's profile. Here's the recommended script:
-
-**[Point out the demo user's profile]**
-
-> "This is our demo user. They've rated over 3,000 movies, mostly dramas, comedies, and romances. Let's see what happens when we ask for something outside their typical taste."
-
-**Query 1 — Single Genre (Thriller):**
-```
->> recommend me some thriller movies
-```
-
-> "Step 1: The LLM converted our request into a SPARQL query and the knowledge graph found 200 thriller movies. Step 2: The pure CF model recommends comedies and dramas — it completely ignores our thriller request because it only knows this user's history. Step 3: The hybrid model injects thriller movies from the KG into the candidate pool. Notice Pulp Fiction and Money Train appeared with the KG match tag — those are thrillers that the CF model alone would never have recommended."
-
-**Query 2 — Multi-Genre (Horror + Mystery):**
-```
->> show me horror and mystery films
-```
-
-> "Now with two genres. The SPARQL query has two FILTER clauses — it requires both Horror AND Mystery. The KG returns movies like Scream, The Omen, and Copycat. Again, the CF model gives us the same comedies and dramas. The hybrid model brings in at least one horror-mystery title that CF never would have found."
-
-**Query 3 — Multi-Genre (Sci-Fi + Action):**
-```
->> I want sci-fi and action movies
-```
-
-> "One more multi-genre query. The LLM correctly generates a two-genre SPARQL query. The KG returns Star Wars, Judge Dredd, and Waterworld — all properly Sci-Fi AND Action. This demonstrates the system can handle arbitrary genre combinations through natural language."
-
-**[Wrap up]**
-
-> "The key takeaway: collaborative filtering alone can't respond to explicit user intent. By integrating a knowledge graph and an LLM, the hybrid model produces recommendations that are both personalized and query-relevant."
-
-### Talking Points for Q&A
-
-- **"Why not just filter by genre?"** — A simple genre filter returns thousands of results with no personalization. The hybrid model ranks genre-matched movies by how well they fit the user's overall taste, not just the genre match.
-- **"Why use an LLM for SPARQL?"** — It makes the system usable with natural language. Users can say "I'm in the mood for a war drama" instead of writing structured queries. The LLM handles variations in phrasing, multi-genre requests, and informal language.
-- **"What about cold-start users?"** — We evaluated this with simulated cold-start (reducing users to 3 interactions). The KG approach provides a meaningful recommendation signal even when CF has almost no data to work with.
-- **"Why is BPR-MF worse than ItemKNN?"** — BPR-MF optimizes for implicit pairwise ranking and needs more training data per user to converge. With our sampling (5,000 users), ItemKNN's direct similarity computation has an advantage. This is a known tradeoff in the literature.
