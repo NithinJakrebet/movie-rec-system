@@ -86,8 +86,8 @@ git clone <your-repo-url>
 cd movie-rec-system
 
 # Create and activate virtual environment
-python3 -m venv venv
-source venv/bin/activate        # macOS / Linux
+python3 -m venv myenv
+source myenv/bin/activate       # macOS / Linux
 # venv\Scripts\activate         # Windows
 
 # Install dependencies
@@ -294,7 +294,7 @@ This section provides a step-by-step guide for running the live demo during a pr
 3. In Terminal 2, navigate to the project and start the demo:
    ```bash
    cd movie-rec-system
-   source venv/bin/activate
+   source myenv/bin/activate
    python3 main.py demo
    ```
 4. Wait for training to complete (~3-4 minutes). You'll see the interactive prompt (`>>`) when it's ready. You can start the demo from a slide deck while this loads in the background.
