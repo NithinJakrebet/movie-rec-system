@@ -14,9 +14,9 @@ class KGHybridRecommender:
        scores each candidate's genre overlap with the user profile,
        and produces a blended score: alpha * CF_score + (1 - alpha) * KG_score.
 
-    This directly addresses cold-start: users with few CF interactions still get
-    meaningful signal from genre preferences, and the KG path doesn't require
-    a minimum interaction threshold.
+    When kg_movie_ids is provided (query-aware mode), scoring uses a blend of
+    the user's historical genre profile AND the query genres directly, so
+    results align with what the user asked for rather than just their history.
     """
 
     def __init__(self, base_model, kg, train, movies, alpha=0.7, candidate_pool=100):
@@ -74,18 +74,54 @@ class KGHybridRecommender:
         print(f"KG-Hybrid ready: alpha={alpha}, candidate_pool={candidate_pool}, "
               f"{len(self.user_genre_profiles)} user profiles built")
 
-    def _kg_score(self, user_id, movie_id):
-        """Score a movie for a user based on genre preference overlap."""
-        profile = self.user_genre_profiles.get(user_id, {})
-        if not profile:
-            return 0.0
+    def _kg_score(self, user_id, movie_id, query_genres=None):
+        """Score a movie for a user based on genre preference overlap.
 
+        Args:
+            user_id: Target user
+            movie_id: Movie to score
+            query_genres: Optional set of genres from the user's current query.
+                          When provided, scoring blends historical profile with
+                          direct query match so results align with what was asked.
+        """
+        profile = self.user_genre_profiles.get(user_id, {})
         movie_genres = self.movie_genres.get(movie_id, set())
         if not movie_genres:
             return 0.0
 
-        # Sum of user's preference weights for this movie's genres
-        return sum(profile.get(g, 0.0) for g in movie_genres)
+        # Historical profile score (normalized genre preference weights)
+        history_score = sum(profile.get(g, 0.0) for g in movie_genres) if profile else 0.0
+
+        if query_genres:
+            # Query match score: fraction of movie's genres that match the query
+            # (1.0 = all movie genres match query, 0.0 = no match)
+            query_match = len(movie_genres & query_genres) / len(movie_genres)
+
+            # Blend: 40% historical preference, 60% query relevance
+            # This ensures query-specific results surface even if they don't
+            # dominate the user's historical genre profile
+            return 0.4 * history_score + 0.6 * query_match
+
+        return history_score
+
+    def _extract_query_genres(self, kg_movie_ids):
+        """Infer the queried genres from the set of KG-matched movie IDs.
+
+        Finds genres that appear in a high fraction of KG results — these
+        are the genres the user's query targeted.
+        """
+        if not kg_movie_ids:
+            return set()
+
+        genre_counts = defaultdict(int)
+        total = len(kg_movie_ids)
+        for mid in kg_movie_ids:
+            for g in self.movie_genres.get(mid, set()):
+                genre_counts[g] += 1
+
+        # Genres present in >30% of KG results are considered "query genres"
+        threshold = 0.30
+        return {g for g, count in genre_counts.items() if count / total >= threshold}
 
     def recommend(self, user_id, top_n=10, kg_movie_ids=None):
         """Generate recommendations by blending CF and KG scores.
@@ -103,19 +139,19 @@ class KGHybridRecommender:
         if not cf_candidates:
             return []
 
-        cf_set = set(cf_candidates)
         rated = self.train_items.get(user_id, set())
-        kg_injected = []
-        if kg_movie_ids:
-            kg_injected = [mid for mid in kg_movie_ids
-                           if mid not in cf_set and mid not in rated]
 
-        # When KG results are injected, shift blend toward KG signal
-        # so genre-matched movies can compete with CF candidates
+        # Infer query genres from KG results for query-aware scoring
+        query_genres = None
+        kg_injected = []
+        blend_alpha = self.alpha  # default: more CF weight
+
         if kg_movie_ids:
-            blend_alpha = 0.4   # query-aware: more KG weight
-        else:
-            blend_alpha = self.alpha  # default: more CF weight
+            cf_set = set(cf_candidates)
+            kg_injected = [mid for mid in kg_movie_ids
+                           if mid not in cf_set and mid not in rated][:50]
+            query_genres = self._extract_query_genres(kg_movie_ids)
+            blend_alpha = 0.25  # query-aware: lean heavily on KG signal
 
         # Score CF candidates
         scored = []
@@ -123,17 +159,16 @@ class KGHybridRecommender:
 
         for rank, movie_id in enumerate(cf_candidates):
             cf_score = 1.0 - (rank / n_candidates)
-            kg_score = self._kg_score(user_id, movie_id)
+            kg_score = self._kg_score(user_id, movie_id, query_genres)
             blended = blend_alpha * cf_score + (1 - blend_alpha) * kg_score
             scored.append((movie_id, blended))
 
-        # Score KG-injected candidates
-        # These are genre-relevant movies the user hasn't seen —
-        # give them a CF baseline equal to a mid-ranked CF candidate
-        cf_baseline = 0.5
+        # Score KG-injected candidates.
+        # Give them a strong CF baseline (0.8) so they can compete with
+        # top CF candidates when their genre score is high.
         for movie_id in kg_injected:
-            kg_score = self._kg_score(user_id, movie_id)
-            blended = blend_alpha * cf_baseline + (1 - blend_alpha) * kg_score
+            kg_score = self._kg_score(user_id, movie_id, query_genres)
+            blended = blend_alpha * 0.8 + (1 - blend_alpha) * kg_score
             scored.append((movie_id, blended))
 
         scored.sort(key=lambda x: x[1], reverse=True)

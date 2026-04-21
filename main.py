@@ -122,7 +122,8 @@ def query_kg_via_llm(kg, user_input):
     if error:
         print(f"  [LLM Error] {error}")
         print(f"  [Fallback] Using direct KG genre lookup...")
-        return _run_fallback(kg, user_input)
+        fallback = _run_fallback(kg, user_input)
+        return fallback, fallback  
 
     if "PREFIX" not in query:
         query = PREFIXES + query
